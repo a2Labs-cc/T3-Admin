@@ -1,4 +1,4 @@
-using Dapper;
+using Dommel;
 using Furien_Admin.Models;
 using Furien_Admin.Utils;
 using Microsoft.Extensions.Logging;
@@ -32,28 +32,8 @@ public class MuteManager
     {
         try
         {
-            const string createTable = @"
-                CREATE TABLE IF NOT EXISTS `t3_mutes` (
-                    `id` INT AUTO_INCREMENT PRIMARY KEY,
-                    `steamid` BIGINT UNSIGNED NOT NULL,
-                    `admin_name` VARCHAR(64) NOT NULL,
-                    `admin_steamid` BIGINT UNSIGNED NOT NULL,
-                    `reason` TEXT NOT NULL,
-                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    `expires_at` TIMESTAMP NULL,
-                    `status` ENUM('active', 'expired', 'unmuted') DEFAULT 'active',
-                    `unmute_admin_name` VARCHAR(64) NULL,
-                    `unmute_admin_steamid` BIGINT UNSIGNED NULL,
-                    `unmute_reason` TEXT NULL,
-                    `unmute_date` TIMESTAMP NULL,
-                    INDEX `idx_steamid_status` (`steamid`, `status`),
-                    INDEX `idx_expires_status` (`expires_at`, `status`),
-                    INDEX `idx_status` (`status`)
-                )";
-
             using var connection = _core.Database.GetConnection("default");
-            connection.Open();
-            await connection.ExecuteAsync(createTable);
+            MigrationRunner.RunMigrations(connection);
 
             _core.Logger.LogInformationIfEnabled("[T3-Admin] Mute database initialized successfully");
         }
@@ -65,30 +45,14 @@ public class MuteManager
 
     public async Task<bool> AddMuteAsync(ulong steamId, int durationMinutes, string reason)
     {
-        try
+        return await Task.Run(() =>
         {
-            var admin = _currentAdmin.Value ?? new AdminContext();
-            DateTime? expiresAt = durationMinutes > 0 ? DateTime.UtcNow.AddMinutes(durationMinutes) : null;
-
-            const string query = @"
-                INSERT INTO t3_mutes (steamid, admin_name, admin_steamid, reason, expires_at, status) 
-                VALUES (@SteamId, @AdminName, @AdminSteamId, @Reason, @ExpiresAt, 'active')";
-
-            using var connection = _core.Database.GetConnection("default");
-            connection.Open();
-
-            int result = await connection.ExecuteAsync(query, new
+            try
             {
-                SteamId = steamId,
-                AdminName = admin.Name,
-                AdminSteamId = admin.SteamId,
-                Reason = reason,
-                ExpiresAt = expiresAt
-            });
+                var admin = _currentAdmin.Value ?? new AdminContext();
+                DateTime? expiresAt = durationMinutes > 0 ? DateTime.UtcNow.AddMinutes(durationMinutes) : null;
 
-            if (result > 0)
-            {
-                _muteCache[steamId] = new Mute
+                var mute = new Mute
                 {
                     SteamId = steamId,
                     AdminName = admin.Name,
@@ -98,55 +62,51 @@ public class MuteManager
                     ExpiresAt = expiresAt,
                     Status = MuteStatus.Active
                 };
-            }
 
-            return result > 0;
-        }
-        catch (Exception ex)
-        {
-            _core.Logger.LogErrorIfEnabled("[T3-Admin] Error adding mute: {Message}", ex.Message);
-            return false;
-        }
+                using var connection = _core.Database.GetConnection("default");
+                var id = connection.Insert(mute);
+                mute.Id = Convert.ToInt32(id);
+                _muteCache[steamId] = mute;
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _core.Logger.LogErrorIfEnabled("[T3-Admin] Error adding mute: {Message}", ex.Message);
+                return false;
+            }
+        });
     }
 
     public async Task<bool> UnmuteAsync(ulong steamId, string unmuteReason)
     {
-        try
+        return await Task.Run(() =>
         {
-            var admin = _currentAdmin.Value ?? new AdminContext();
-
-            const string query = @"
-                UPDATE t3_mutes 
-                SET status = 'unmuted', 
-                    unmute_admin_name = @UnmuteAdminName,
-                    unmute_admin_steamid = @UnmuteAdminSteamId,
-                    unmute_reason = @UnmuteReason,
-                    unmute_date = UTC_TIMESTAMP()
-                WHERE steamid = @SteamId AND status = 'active'";
-
-            using var connection = _core.Database.GetConnection("default");
-            connection.Open();
-
-            int result = await connection.ExecuteAsync(query, new
+            try
             {
-                SteamId = steamId,
-                UnmuteAdminName = admin.Name,
-                UnmuteAdminSteamId = admin.SteamId,
-                UnmuteReason = unmuteReason
-            });
+                var admin = _currentAdmin.Value ?? new AdminContext();
+                using var connection = _core.Database.GetConnection("default");
+                
+                var mute = connection.FirstOrDefault<Mute>(m => m.SteamId == steamId && m.Status == MuteStatus.Active);
+                if (mute == null) return false;
 
-            if (result > 0)
-            {
+                mute.Status = MuteStatus.Unmuted;
+                mute.UnmuteAdminName = admin.Name;
+                mute.UnmuteAdminSteamId = admin.SteamId;
+                mute.UnmuteReason = unmuteReason;
+                mute.UnmuteDate = DateTime.UtcNow;
+
+                connection.Update(mute);
                 _muteCache.Remove(steamId);
-            }
 
-            return result > 0;
-        }
-        catch (Exception ex)
-        {
-            _core.Logger.LogErrorIfEnabled("[T3-Admin] Error unmuting player: {Message}", ex.Message);
-            return false;
-        }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _core.Logger.LogErrorIfEnabled("[T3-Admin] Error unmuting player: {Message}", ex.Message);
+                return false;
+            }
+        });
     }
 
     public async Task<Mute?> GetActiveMuteAsync(ulong steamId)
@@ -164,30 +124,11 @@ public class MuteManager
                 return cachedMute;
             }
 
-            const string query = @"
-                SELECT 
-                    id as Id,
-                    steamid as SteamId,
-                    admin_name as AdminName,
-                    admin_steamid as AdminSteamId,
-                    reason as Reason,
-                    created_at as CreatedAt,
-                    expires_at as ExpiresAt,
-                    status as Status,
-                    unmute_admin_name as UnmuteAdminName,
-                    unmute_admin_steamid as UnmuteAdminSteamId,
-                    unmute_reason as UnmuteReason,
-                    unmute_date as UnmuteDate
-                FROM t3_mutes 
-                WHERE steamid = @SteamId 
-                AND status = 'active'
-                AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP())
-                LIMIT 1";
-
             using var connection = _core.Database.GetConnection("default");
-            connection.Open();
-
-            var mute = await connection.QueryFirstOrDefaultAsync<Mute>(query, new { SteamId = steamId });
+            var mute = connection.FirstOrDefault<Mute>(m => 
+                m.SteamId == steamId && 
+                m.Status == MuteStatus.Active &&
+                (m.ExpiresAt == null || m.ExpiresAt > DateTime.UtcNow));
 
             if (mute != null)
             {
@@ -219,49 +160,53 @@ public class MuteManager
 
     public async Task<int> GetTotalMutesAsync(ulong steamId)
     {
-        try
+        return await Task.Run(() =>
         {
-            const string query = @"SELECT COUNT(*) FROM t3_mutes WHERE steamid = @SteamId";
-
-            using var connection = _core.Database.GetConnection("default");
-            connection.Open();
-
-            var count = await connection.ExecuteScalarAsync<int>(query, new { SteamId = steamId });
-            return count;
-        }
-        catch (Exception ex)
-        {
-            _core.Logger.LogErrorIfEnabled("[T3-Admin] Error getting total mutes: {Message}", ex.Message);
-            return 0;
-        }
+            try
+            {
+                using var connection = _core.Database.GetConnection("default");
+                var mutes = connection.Select<Mute>(m => m.SteamId == steamId);
+                return mutes.Count();
+            }
+            catch (Exception ex)
+            {
+                _core.Logger.LogErrorIfEnabled("[T3-Admin] Error getting total mutes: {Message}", ex.Message);
+                return 0;
+            }
+        });
     }
 
     public async Task UpdateExpiredMutesAsync()
     {
-        try
+        await Task.Run(() =>
         {
-            const string query = @"
-                UPDATE t3_mutes 
-                SET status = 'expired' 
-                WHERE status = 'active' 
-                AND expires_at IS NOT NULL 
-                AND expires_at <= UTC_TIMESTAMP()";
-
-            using var connection = _core.Database.GetConnection("default");
-            connection.Open();
-
-            int cleaned = await connection.ExecuteAsync(query);
-
-            if (cleaned > 0)
+            try
             {
-                _core.Logger.LogInformationIfEnabled("[T3-Admin] Marked {Count} mutes as expired", cleaned);
-                _muteCache.Clear();
+                using var connection = _core.Database.GetConnection("default");
+                var expiredMutes = connection.Select<Mute>(m => 
+                    m.Status == MuteStatus.Active && 
+                    m.ExpiresAt != null && 
+                    m.ExpiresAt <= DateTime.UtcNow);
+
+                int cleaned = 0;
+                foreach (var mute in expiredMutes)
+                {
+                    mute.Status = MuteStatus.Expired;
+                    connection.Update(mute);
+                    cleaned++;
+                }
+
+                if (cleaned > 0)
+                {
+                    _core.Logger.LogInformationIfEnabled("[T3-Admin] Marked {Count} mutes as expired", cleaned);
+                    _muteCache.Clear();
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            _core.Logger.LogErrorIfEnabled("[T3-Admin] Error cleaning expired mutes: {Message}", ex.Message);
-        }
+            catch (Exception ex)
+            {
+                _core.Logger.LogErrorIfEnabled("[T3-Admin] Error cleaning expired mutes: {Message}", ex.Message);
+            }
+        });
     }
 
     public void ClearCache()

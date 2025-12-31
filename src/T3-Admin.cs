@@ -16,7 +16,7 @@ using SwiftlyS2.Shared.Plugins;
 
 namespace T3_Admin;
 
-[PluginMetadata(Id = "T3_Admin", Version = "1.0.0", Name = "T3 Admin", Author = "T3Marius, aga", Description = "A comprehensive admin plugin for CS2.")]
+[PluginMetadata(Id = "T3_Admin", Version = "1.0.1", Name = "T3 Admin", Author = "T3Marius, aga", Description = "A comprehensive admin plugin for CS2.")]
 public partial class T3_Admin : BasePlugin
 {
     private PluginConfig _config = null!;
