@@ -367,7 +367,7 @@ public class EventHandlers
                     _commands.Hsay.Any(c => c.Equals(cmdName, StringComparison.OrdinalIgnoreCase));
 
                 if (isAdminChatCommand)
-                    return HookResult.Stop;
+                    return HookResult.Continue;
             }
         }
         

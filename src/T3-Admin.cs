@@ -12,11 +12,12 @@ using SwiftlyS2.Shared.Commands;
 using SwiftlyS2.Shared.Events;
 using SwiftlyS2.Shared.GameEventDefinitions;
 using SwiftlyS2.Shared.GameEvents;
+using SwiftlyS2.Shared.Misc;
 using SwiftlyS2.Shared.Plugins;
 
 namespace T3_Admin;
 
-[PluginMetadata(Id = "T3_Admin", Version = "1.0.1", Name = "T3 Admin", Author = "T3Marius, aga", Description = "A comprehensive admin plugin for CS2.")]
+[PluginMetadata(Id = "T3_Admin", Version = "1.0.2", Name = "T3 Admin", Author = "T3Marius, aga", Description = "A comprehensive admin plugin for CS2.")]
 public partial class T3_Admin : BasePlugin
 {
     private PluginConfig _config = null!;
@@ -249,6 +250,12 @@ public partial class T3_Admin : BasePlugin
 
     private void RegisterCommand(string name, ICommandService.CommandListener handler)
     {
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        if (Core.Command.IsCommandRegistered(name))
+            return;
+
         Core.Command.RegisterCommand(name, handler, registerRaw: true);
     }
 
@@ -258,5 +265,28 @@ public partial class T3_Admin : BasePlugin
         Core.Event.OnClientDisconnected += _eventHandlers.OnClientDisconnected;
 
         Core.GameEvent.HookPost<EventRoundStart>(_eventHandlers.OnRoundStart);
+        Core.GameEvent.HookPost<EventRoundStart>(OnRoundStartEnsureCommands);
+    }
+
+    private HookResult OnRoundStartEnsureCommands(EventRoundStart @event)
+    {
+        EnsureCommandsRegistered();
+        return HookResult.Continue;
+    }
+
+    private void EnsureCommandsRegistered()
+    {
+        try
+        {
+            var probe = _config?.Commands?.AdminMenu?.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(probe) && Core.Command.IsCommandRegistered(probe))
+                return;
+
+            RegisterCommands();
+        }
+        catch (Exception ex)
+        {
+            Core.Logger.LogErrorIfEnabled("[T3Admin] Failed while ensuring commands are registered: {Message}", ex.Message);
+        }
     }
 }
