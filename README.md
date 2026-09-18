@@ -11,6 +11,13 @@
 
 </div>
 
+> [!WARNING]
+> **This project is archived and no longer maintained.**
+>
+> Please use one of these alternatives instead:
+> - [CS2_Admin](https://github.com/candaysa/CS2_Admin) — stable, feature-rich admin plugin
+> - [Admins](https://github.com/SwiftlyS2-Plugins/Admins) — official SwiftlyS2 admin plugin
+
 ## Overview
 
 **T3-Admin** is a SwiftlyS2 plugin that provides a classic admin workflow:
